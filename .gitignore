@@ -1,0 +1,38 @@
+# Build directories
+/build/
+/build-debug/
+/cmake-build-*/
+
+# CMake generated files
+/CMakeCache.txt
+/CMakeFiles/
+/Makefile
+/cmake_install.cmake
+/install_manifest.txt
+/compile_commands.json
+
+# Build artifacts
+/*.so
+/*.a
+/*.out
+/build_engine
+/detect_infer
+/inspect_engine
+/libyolo_trt_core.a
+
+# Local caches and session exports
+/.cache/
+/2026-*.txt
+
+# IDE files
+/.vscode/
+/.idea/
+/.cursor/
+
+# Editor temp files
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
