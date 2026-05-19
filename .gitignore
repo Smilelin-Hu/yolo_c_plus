@@ -36,3 +36,33 @@
 
 # Logs
 *.log
+test_img_cls/1.png
+test_img_cls/bus.jpg
+test_img_cls/zidane.jpg
+img/ng/Google_4CS4_0325_BLACK_190-88-3_1_2.jpg
+img/ng/Google_4CS4_0325_BLACK_190-88-3_2_2.jpg
+img/ng/Google_4CS4_0325_BLACK_192-46-3_1_28.jpg
+img/ng/Google_4CS4_0325_BLACK_192-46-3_2_28.jpg
+img/ng/Google_4CS4_0325_BLACK_192-142-1_1_23.jpg
+img/ng/Google_4CS4_0325_BLACK_192-142-1_2_23.jpg
+img/ng/Google_4CS4_0325_BLACK_192-152-3_1_27.jpg
+img/ng/Google_4CS4_0325_BLACK_192-152-3_2_27.jpg
+img/ng/Google_4CS4_0325_BLACK_195-36-2_1_1.jpg
+img/ng/Google_4CS4_0325_BLACK_195-36-2_2_1.jpg
+img/ok/Google_4CS4_0324_OK_0312-qing-ykong_290_2_2_5.jpg
+img/ok/Google_4CS4_0324_OK_0320-lan-ykong_7_3_1_14.jpg
+img/ok/Google_4CS4_0324_OK_0320-lan-ykong_18_1_2_15.jpg
+img/ok/Google_4CS4_0324_OK_0320-lan-ykong_40_3_1_23.jpg
+img/ok/Google_4CS4_0324_OK_0320-lan-ykong_54_3_1_1.jpg
+img/ok/Google_4CS4_0325_OK_24-3_2_21.jpg
+img/ok/Google_4CS4_0325_OK_204-112_2_2_27.jpg
+.codex
+.gitignore
+best.onnx
+cls-yk.engine
+cls-yk.onnx
+mutysize_11.engine
+test_best.engine
+yolo26-cls.engine
+yolo26-cls.onnx
+yolo26m.onnx
