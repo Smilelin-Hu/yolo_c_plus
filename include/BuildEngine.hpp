@@ -9,20 +9,27 @@
 
 namespace yolo {
 
+enum class ProfileMode {
+    kAuto,
+    kForce,
+    kDisable,
+};
+
 struct BuildConfig {
     std::string onnx_path;
     std::string engine_path;
     ModelMeta meta;
     PrecisionMode precision{PrecisionMode::kFP16};
     size_t workspace_size{1ULL << 30};
-    std::vector<int> min_shape{1, 3, 320, 320};
-    std::vector<int> opt_shape{1, 3, 640, 640};
-    std::vector<int> max_shape{1, 3, 1280, 1280};
+    std::vector<int> min_shape;
+    std::vector<int> opt_shape;
+    std::vector<int> max_shape;
     int dla_core{-1};
     bool verbose{false};
     bool allow_gpu_fallback{true};
     std::string calibration_cache_path;
     bool tf32{true};
+    ProfileMode profile_mode{ProfileMode::kAuto};
 };
 
 struct BuildResult {

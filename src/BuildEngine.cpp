@@ -43,6 +43,109 @@ private:
     Int8Calibrator* delegate_{nullptr};
 };
 
+bool hasDynamicDims(const nvinfer1::Dims& dims) {
+    for (int i = 0; i < dims.nbDims; ++i) {
+        if (dims.d[i] < 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void validateProfileShape(const std::vector<int>& shape, const nvinfer1::Dims& input_dims, const char* shape_name) {
+    if (static_cast<int>(shape.size()) != input_dims.nbDims) {
+        std::ostringstream oss;
+        oss << shape_name << " rank mismatch: expected " << input_dims.nbDims
+            << " dims but got " << shape.size();
+        throw std::runtime_error(oss.str());
+    }
+
+    for (int i = 0; i < input_dims.nbDims; ++i) {
+        if (shape[static_cast<size_t>(i)] <= 0) {
+            std::ostringstream oss;
+            oss << shape_name << " dimension at axis " << i << " must be greater than 0";
+            throw std::runtime_error(oss.str());
+        }
+        if (input_dims.d[i] >= 0 && shape[static_cast<size_t>(i)] != input_dims.d[i]) {
+            std::ostringstream oss;
+            oss << "Input tensor has static dimension " << input_dims.d[i] << " at axis " << i
+                << ", but " << shape_name << " specifies " << shape[static_cast<size_t>(i)];
+            throw std::runtime_error(oss.str());
+        }
+    }
+}
+
+enum class ProfileShapeKind {
+    kMin,
+    kOpt,
+    kMax,
+};
+
+int defaultDynamicBatch(ProfileShapeKind kind) {
+    return kind == ProfileShapeKind::kMax ? 4 : 1;
+}
+
+int defaultDynamicSpatial(const BuildConfig& config, ProfileShapeKind kind, bool is_width_axis) {
+    if (config.meta.task == TaskType::kClassification) {
+        const int configured = is_width_axis ? config.meta.input_width : config.meta.input_height;
+        return configured > 0 ? configured : 224;
+    }
+
+    switch (kind) {
+        case ProfileShapeKind::kMin:
+            return 640;
+        case ProfileShapeKind::kOpt:
+            return 2048;
+        case ProfileShapeKind::kMax:
+            return 4096;
+    }
+    return 640;
+}
+
+std::vector<int> resolveProfileShape(const BuildConfig& config, const std::vector<int>& shape,
+                                     const nvinfer1::Dims& input_dims, ProfileShapeKind kind) {
+    if (!shape.empty()) {
+        return shape;
+    }
+
+    std::vector<int> resolved(static_cast<size_t>(input_dims.nbDims), 1);
+    for (int i = 0; i < input_dims.nbDims; ++i) {
+        if (input_dims.d[i] > 0) {
+            resolved[static_cast<size_t>(i)] = input_dims.d[i];
+            continue;
+        }
+
+        if (i == 0) {
+            resolved[static_cast<size_t>(i)] = defaultDynamicBatch(kind);
+        } else if (i == 1) {
+            resolved[static_cast<size_t>(i)] = 3;
+        } else if (i == 2) {
+            resolved[static_cast<size_t>(i)] = defaultDynamicSpatial(config, kind, false);
+        } else if (i == 3) {
+            resolved[static_cast<size_t>(i)] = defaultDynamicSpatial(config, kind, true);
+        } else {
+            resolved[static_cast<size_t>(i)] = 1;
+        }
+    }
+    return resolved;
+}
+
+void validateProfileOrdering(const std::vector<int>& min_shape, const std::vector<int>& opt_shape,
+                             const std::vector<int>& max_shape) {
+    if (min_shape.size() != opt_shape.size() || min_shape.size() != max_shape.size()) {
+        throw std::runtime_error("Optimization profile rank mismatch");
+    }
+
+    for (size_t i = 0; i < min_shape.size(); ++i) {
+        if (!(min_shape[i] <= opt_shape[i] && opt_shape[i] <= max_shape[i])) {
+            std::ostringstream oss;
+            oss << "Optimization profile requires min <= opt <= max at axis " << i << ", but got "
+                << min_shape[i] << ", " << opt_shape[i] << ", " << max_shape[i];
+            throw std::runtime_error(oss.str());
+        }
+    }
+}
+
 }  // namespace
 
 BuildResult buildEngineFromOnnx(const BuildConfig& config, Int8Calibrator* calibrator) {
@@ -80,19 +183,21 @@ BuildResult buildEngineFromOnnx(const BuildConfig& config, Int8Calibrator* calib
         throw std::runtime_error(oss.str());
     }
 
-    auto profile = builder->createOptimizationProfile();
-    if (profile == nullptr) {
-        throw std::runtime_error("Failed to create optimization profile");
-    }
-
     nvinfer1::ITensor* input = network->getInput(0);
     if (input == nullptr) {
         throw std::runtime_error("Network has no input tensor");
     }
 
-    profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kMIN, toDims(config.min_shape));
-    profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kOPT, toDims(config.opt_shape));
-    profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kMAX, toDims(config.max_shape));
+    const nvinfer1::Dims input_dims = input->getDimensions();
+    const bool input_has_dynamic_dims = hasDynamicDims(input_dims);
+    const bool use_profile = config.profile_mode == ProfileMode::kForce
+                          || (config.profile_mode == ProfileMode::kAuto && input_has_dynamic_dims);
+
+    if (!use_profile && input_has_dynamic_dims) {
+        throw std::runtime_error(
+            "Input tensor has dynamic dimensions, but profile mode is disable. "
+            "Use --profile-mode auto|force with matching --min-shape/--opt-shape/--max-shape.");
+    }
 
     auto build_config = TrtUniquePtr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
     if (!build_config) {
@@ -100,7 +205,29 @@ BuildResult buildEngineFromOnnx(const BuildConfig& config, Int8Calibrator* calib
     }
 
     build_config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, config.workspace_size);
-    build_config->addOptimizationProfile(profile);
+    if (use_profile) {
+        auto profile = builder->createOptimizationProfile();
+        if (profile == nullptr) {
+            throw std::runtime_error("Failed to create optimization profile");
+        }
+
+        const std::vector<int> min_shape =
+            resolveProfileShape(config, config.min_shape, input_dims, ProfileShapeKind::kMin);
+        const std::vector<int> opt_shape =
+            resolveProfileShape(config, config.opt_shape, input_dims, ProfileShapeKind::kOpt);
+        const std::vector<int> max_shape =
+            resolveProfileShape(config, config.max_shape, input_dims, ProfileShapeKind::kMax);
+
+        validateProfileShape(min_shape, input_dims, "--min-shape");
+        validateProfileShape(opt_shape, input_dims, "--opt-shape");
+        validateProfileShape(max_shape, input_dims, "--max-shape");
+        validateProfileOrdering(min_shape, opt_shape, max_shape);
+
+        profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kMIN, toDims(min_shape));
+        profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kOPT, toDims(opt_shape));
+        profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kMAX, toDims(max_shape));
+        build_config->addOptimizationProfile(profile);
+    }
 
     if (config.tf32) {
         build_config->setFlag(nvinfer1::BuilderFlag::kTF32);

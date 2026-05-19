@@ -31,7 +31,7 @@ set(TENSORRT_INCLUDE_DIR "${TensorRT_ROOT}/include")
 set(TENSORRT_LIB "${TensorRT_ROOT}/lib/libnvinfer.so")
 set(TENSORRT_ONNX_LIB "${TensorRT_ROOT}/lib/libnvonnxparser.so")
 set(TENSORRT_PLUGIN_LIB "${TensorRT_ROOT}/lib/libnvinfer_plugin.so")
-set(TENSORRT_BUILDER_RESOURCE_LIB "${TensorRT_ROOT}/lib/libnvinfer_builder_resource_sm86.so.10.15.1")
+file(GLOB TENSORRT_BUILDER_RESOURCE_LIBS "${TensorRT_ROOT}/lib/libnvinfer_builder_resource*.so*")
 
 set(CMAKE_BUILD_RPATH "${TensorRT_ROOT}/lib;${CUDA_ROOT}/lib64")
 set(CMAKE_INSTALL_RPATH "${TensorRT_ROOT}/lib;${CUDA_ROOT}/lib64")
@@ -42,7 +42,7 @@ if (NOT EXISTS "${TENSORRT_INCLUDE_DIR}/NvInfer.h")
     message(FATAL_ERROR "TensorRT headers not found under ${TENSORRT_INCLUDE_DIR}")
 endif()
 
-if (NOT EXISTS "${TENSORRT_LIB}" OR NOT EXISTS "${TENSORRT_ONNX_LIB}" OR NOT EXISTS "${TENSORRT_PLUGIN_LIB}" OR NOT EXISTS "${TENSORRT_BUILDER_RESOURCE_LIB}")
+if (NOT EXISTS "${TENSORRT_LIB}" OR NOT EXISTS "${TENSORRT_ONNX_LIB}" OR NOT EXISTS "${TENSORRT_PLUGIN_LIB}" OR NOT TENSORRT_BUILDER_RESOURCE_LIBS)
     message(FATAL_ERROR "TensorRT libraries not found under ${TensorRT_ROOT}/lib")
 endif()
 
@@ -53,6 +53,7 @@ add_library(yolo_trt_core
     src/PreprocessCuda.cu
     src/PostprocessDetect.cu
     src/YoloMeta.cpp
+    src/ClassifyCli.cpp
     src/DetectCli.cpp
     src/ImageIO.cpp
     src/VisualizeDetect.cpp
@@ -75,7 +76,6 @@ target_link_libraries(yolo_trt_core
         ${TENSORRT_LIB}
         ${TENSORRT_ONNX_LIB}
         ${TENSORRT_PLUGIN_LIB}
-        ${TENSORRT_BUILDER_RESOURCE_LIB}
         ${OpenCV_LIBS}
 )
 
@@ -87,17 +87,34 @@ target_compile_definitions(yolo_trt_core
 
 set_target_properties(yolo_trt_core PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
-    BUILD_RPATH "${TensorRT_ROOT}/lib;${CUDA_ROOT}/lib64;${TENSORRT_BUILDER_RESOURCE_LIB}"
-    INSTALL_RPATH "${TensorRT_ROOT}/lib;${CUDA_ROOT}/lib64;${TENSORRT_BUILDER_RESOURCE_LIB}"
+    BUILD_RPATH "${TensorRT_ROOT}/lib;${CUDA_ROOT}/lib64"
+    INSTALL_RPATH "${TensorRT_ROOT}/lib;${CUDA_ROOT}/lib64"
 )
+
+function(configure_yolo_runtime_target target_name)
+    # TensorRT loads builder resources via dlopen, so old-style RPATH is more
+    # reliable than RUNPATH when the TensorRT directory is not in ld.so cache.
+    target_link_options(${target_name} PRIVATE "-Wl,--disable-new-dtags")
+    set_target_properties(${target_name} PROPERTIES
+        BUILD_RPATH "${TensorRT_ROOT}/lib;${CUDA_ROOT}/lib64"
+        INSTALL_RPATH "${TensorRT_ROOT}/lib;${CUDA_ROOT}/lib64"
+    )
+endfunction()
 
 if (YOLO_BUILD_EXAMPLES)
     add_executable(build_engine tools/BuildEngineMain.cpp)
     target_link_libraries(build_engine PRIVATE yolo_trt_core)
+    configure_yolo_runtime_target(build_engine)
 
     add_executable(inspect_engine tools/InspectEngineMain.cpp)
     target_link_libraries(inspect_engine PRIVATE yolo_trt_core)
+    configure_yolo_runtime_target(inspect_engine)
 
     add_executable(detect_infer DetectInfer.cpp)
     target_link_libraries(detect_infer PRIVATE yolo_trt_core)
+    configure_yolo_runtime_target(detect_infer)
+
+    add_executable(classify_infer tools/ClassifyInfer.cpp)
+    target_link_libraries(classify_infer PRIVATE yolo_trt_core)
+    configure_yolo_runtime_target(classify_infer)
 endif()

@@ -68,10 +68,36 @@ bool parseOnOff(const std::string& name, const std::string& value) {
     throw std::runtime_error("Unsupported value for " + name + ": " + value + " (expected on|off)");
 }
 
+ProfileMode parseProfileMode(const std::string& value) {
+    if (value == "auto") {
+        return ProfileMode::kAuto;
+    }
+    if (value == "force") {
+        return ProfileMode::kForce;
+    }
+    if (value == "disable") {
+        return ProfileMode::kDisable;
+    }
+    throw std::runtime_error("Unsupported value for --profile-mode: " + value + " (expected auto|force|disable)");
+}
+
+std::string profileModeToString(ProfileMode mode) {
+    switch (mode) {
+        case ProfileMode::kAuto:
+            return "auto";
+        case ProfileMode::kForce:
+            return "force";
+        case ProfileMode::kDisable:
+            return "disable";
+    }
+    return "unknown";
+}
+
 void printUsage() {
     std::cout << "Usage: build_engine --onnx model.onnx --engine model.engine --task detect|classify|segment "
                  "[--preset yolo11m|yolo26m] [--precision fp32|fp16|int8] [--workspace-mb 1024] [--tf32 on|off] "
-                 "[--min-shape 1x3x320x320] [--opt-shape 1x3x640x640] [--max-shape 1x3x1280x1280] [--num-classes 80] "
+                 "[--profile-mode auto|force|disable] [--min-shape 1x3x640x640] [--opt-shape 1x3x2048x2048] "
+                 "[--max-shape 4x3x4096x4096] [--num-classes 80] "
                  "[--dla-core 0] [--no-gpu-fallback] [--verbose] [--calibration-cache cache.bin]"
               << std::endl;
 }
@@ -104,14 +130,15 @@ int main(int argc, char** argv) {
         std::string preset;
         std::string precision_name = "fp16";
         int num_classes = 80;
-        std::vector<int> min_shape{1, 3, 640, 640};
-        std::vector<int> opt_shape{1, 3, 2048, 2048};
-        std::vector<int> max_shape{4, 3, 4096, 4096};
+        std::vector<int> min_shape;
+        std::vector<int> opt_shape;
+        std::vector<int> max_shape;
         size_t workspace_mb = 1024;
         int dla_core = -1;
         bool allow_gpu_fallback = true;
         bool verbose = false;
         bool tf32 = true;
+        yolo::ProfileMode profile_mode = yolo::ProfileMode::kAuto;
         std::string calibration_cache_path;
 
         for (int i = 1; i < argc; ++i) {
@@ -143,6 +170,8 @@ int main(int argc, char** argv) {
                 max_shape = yolo::parseShape(next(arg));
             } else if (arg == "--workspace-mb") {
                 workspace_mb = static_cast<size_t>(std::stoull(next(arg)));
+            } else if (arg == "--profile-mode") {
+                profile_mode = yolo::parseProfileMode(next(arg));
             } else if (arg == "--tf32") {
                 tf32 = yolo::parseOnOff(arg, next(arg));
             } else if (arg == "--dla-core") {
@@ -174,6 +203,10 @@ int main(int argc, char** argv) {
         } else {
             meta.task = yolo::parseTask(task_name);
             meta.num_classes = num_classes;
+            if (meta.task == yolo::TaskType::kClassification) {
+                meta.input_width = 224;
+                meta.input_height = 224;
+            }
         }
 
         yolo::BuildConfig config;
@@ -190,9 +223,11 @@ int main(int argc, char** argv) {
         config.allow_gpu_fallback = allow_gpu_fallback;
         config.calibration_cache_path = calibration_cache_path;
         config.tf32 = tf32;
+        config.profile_mode = profile_mode;
 
         std::cout << "Building engine with precision=" << yolo::precisionToString(config.precision)
                   << ", workspace_mb=" << workspace_mb << ", tf32=" << (config.tf32 ? "on" : "off")
+                  << ", profile_mode=" << yolo::profileModeToString(config.profile_mode)
                   << ", dla_core=" << config.dla_core
                   << ", gpu_fallback=" << (config.allow_gpu_fallback ? "on" : "off") << std::endl;
         if (config.precision == yolo::PrecisionMode::kINT8 && config.calibration_cache_path.empty()) {
